@@ -11,6 +11,20 @@
 .w3 {   width: 300px;}
 .w4 {   width: 400px;}
 
+/* 選択不可にする */
+body{
+  user-select: none;
+}
+
+/* 画像ドラッグ不可にする */
+img {
+	user-drag: none;
+	-webkit-user-drag: none;
+	-moz-user-select: none;
+}
+
+
+
 table.top {
     width: 900px;
     border-collapse: collapse;
@@ -54,6 +68,23 @@ div.log {
 }
 
 /* メイン画面デザイン */
+div.main_msg_ok {
+    border: 1px solid black;
+    font-size: large;
+    font-weight: bold;
+    background-color: white;
+    color: blue;
+}
+
+div.main_msg_ng {
+    border: 1px solid black;    
+    font-size: large;
+    font-weight: bold;
+    background-color: black;
+    color: yellow;
+}
+
+
 div.ephem {
     display: block;
     width: 35%;
@@ -287,9 +318,9 @@ div.config_bg {
 div.config_window {
     visibility: hidden;
     background-color: white;
-    font-size: x-large;
-    width: 50%;
-    height: 300px;
+    font-size: large;
+    width: 800px;
+    height: 500px;
     position: fixed;
     left: 50%;
     top: 50%;
@@ -299,12 +330,43 @@ div.config_window {
     z-index: 3;
 }
 
-div.caution {
+div.config_comment {
     font-size: small;
+}
+
+div.config_confirm {
+    display: inline-block;
+    border: 1px solid black;
+    border-radius: 4px;    
+    padding: 4px 10px;
+    text-align:center;
+    font-size: large;
+}
+
+div.btnOutput {
+    border: 1px solid black;
+    border-radius: 4px;
+    width: 70px;
+    height: 30px;
+    display: inline-block;
     text-align: center;
 }
 
-div.confirm {
-    margin: 0 0 0 auto;
-    text-align:right;
+div.outputOn  {background-color:orange;}
+div.outputOff {background-color:gray;}
+
+div.admin_window {
+    visibility: hidden;
+    background-color: white;
+    font-size: large;
+    width: 800px;
+    height: 500px;
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    border-radius: 10px;
+    padding: 20px;
+    z-index: 2;
 }
+

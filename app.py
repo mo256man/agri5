@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request
 from myEphem import Ephem
+# from myContec import Contec
 import json
 import random
 from time import sleep
@@ -26,8 +27,10 @@ GPIO.setup(led_pin, GPIO.OUT)
 for pin in light_pins:
     GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
 
-light_cnt = 0               # 光センサー計測回数　6回でリセット
+# グローバル変数
 light_sum = 0               # 光センサーオフの累計
+sensing_count = 0           # 光センサー計測リセット回数
+light_cnt = 0               # 光センサー計測回数　sensing_countの回数でリセット
 
 battery = { "Ah": 100,
             "power": 12,    # LED消費電力（W）
@@ -37,7 +40,7 @@ battery = { "Ah": 100,
             "charge": 1500  # ソーラー＋風力での発電（Wh）
             }
 
-# 設定ファイル
+# 設定ファイルのクラス
 class Config():
     def __init__(self):
         self.filename = "config.ini"
@@ -47,15 +50,15 @@ class Config():
     def read(self):
         # 設定ファイルが存在しない場合、デフォルト設定を新規作成する
         if not os.path.exists(self.filename):
-            print("設定ファイルを作成する")
             with open(self.filename, mode="w", encoding="utf-8") as f:
-                f.write("[DEFAULT]\nplace = 名古屋\nlat = 35.1667\nlon = 136.9167\nelev = 0\nmorning_offset = 0\nevening_offset = 0\nmorning_minutes=90\nevening_minutes=90\n")
+                msg = "[DEFAULT]\nplace = 名古屋\nlat = 35.1667\nlon = 136.9167\nelev = 0\n"
+                msg += "morning_offset = 0\nevening_offset = 0\nmorning_minutes=90\nevening_minutes=90\nsensing_interval=10\nsensing_count=6\n"
+                msg += "output1=1\noutput2=1\noutput3=1\noutput4=1\n"
+                f.write()
         self.parser.read(self.filename, encoding="utf-8")
-        print(dict(self.parser["DEFAULT"]))
         return dict(self.parser["DEFAULT"])
 
     def write(self, dict):
-        print(dict)
         self.parser["DEFAULT"].update(dict)
         with open(self.filename, mode="w",  encoding="utf-8") as f:
             self.parser.write(f)
@@ -71,24 +74,31 @@ def getTime():
     dt = datetime.datetime.now()
     return dt.strftime("%Y/%m/%d %H:%M:%S")
 
-# テキストに追記する
-def addLog(text):
-    with open("log.text", mode="a") as f:
-        f.write(f"{getTime()}　{text}\n")
-
+# ログを残す
+def add_log(text, filename):
+    with open(filename, mode="a") as f:
+        f.write(text + "\n")
 
 config = Config()                   # 設定のクラス
 app = Flask(__name__)
 
 @app.route("/")
 def index():
-    addLog("開始")
     return render_template("index.html")
 
 @app.route("/getBattSetting", methods = ["POST"])
 def getBattSetting():
     if request.method == "POST":
         return json.dumps(battery)             # 辞書をJSONにして返す
+
+# ログへの書き込み
+@app.route("/writeLog", methods = ["POST"])
+def writeLog():
+    if request.method == "POST":
+        text = request.form["text"]
+        filename = request.form["filename"]
+        add_log(text, filename)
+        return json.dumps({"result": "OK"})
 
 # 暦
 @app.route("/getEphem", methods = ["POST"])
@@ -99,7 +109,7 @@ def getEphem():
     except Exception as e:
         message = str(e)
         dict = {"error": message}  # エラーメッセージ
-    addLog("暦算出")
+    add_log("暦算出", "動作ログ.txt")
     return json.dumps(dict)         # 辞書をJSONにして返す
 
 
@@ -112,14 +122,14 @@ def getBatt():
         if is_try=="true":               # true/falseは文字列として送られてくる
             dict["ana3"] = random.randint(0, 100)
             dict["ana0"] = random.randint(0, 100)
-            addLog(f"電圧（トライ）: {dict['ana3']}")
+            add_log(f"電圧（トライ）: {dict['ana3']}", "動作ログ.txt")
             print(f"{getTime()}　電圧（トライ）:{dict}")
         else:
             ana3 = analog_read(ch=3)
             ana0 = analog_read(ch=0)
             dict["ana3"] = int(ana3*100)
             dict["ana0"] = int(ana0*100)
-            addLog(f"電圧（本番）: {dict['ana3']}")
+            add_log(f"電圧（本番）: {dict['ana3']}", "動作ログ.txt")
             print(f"{getTime()}　電圧（本番）:{dict}")
         return json.dumps(dict)
 
@@ -133,8 +143,8 @@ def getHumi():
         if is_try=="true":               # true/falseは文字列として送られてくる
             dict["temp"] = random.randint(10, 40)
             dict["humi"] = random.randint(0, 100)
-            addLog(f"温度（トライ）: {dict['temp']}")
-            addLog(f"湿度（トライ）: {dict['humi']}")
+            add_log(f"温度（トライ）: {dict['temp']}", "動作ログ.txt")
+            add_log(f"湿度（トライ）: {dict['humi']}", "動作ログ.txt")
             print(f"{getTime()}　温湿度（トライ）:{dict}")
         else:
             result = humi_sensor.read()
@@ -144,8 +154,8 @@ def getHumi():
             else:
                 dict["temp"] = "N/A"
                 dict["humi"] = "N/A"
-            addLog(f"温度（本番）: {dict['temp']}")
-            addLog(f"湿度（本番）: {dict['humi']}")
+            add_log(f"温度（本番）: {dict['temp']}", "動作ログ.txt")
+            add_log(f"湿度（本番）: {dict['humi']}", "動作ログ.txt")
             print(f"{getTime()}　温湿度（本番）:{dict}")
         return json.dumps(dict)
 
@@ -153,18 +163,22 @@ def getHumi():
 # 光センサー
 @app.route("/getLight", methods=["POST"])
 def getLight():
-    global light_cnt, light_sum, light_log
-    light_cnt = (light_cnt+1) % 6
+    global light_cnt, light_sum, light_log, sensing_count
+    light_cnt = (light_cnt+1) % sensing_count
     if light_cnt == 0:
-        light_sum = 0
         light_log = ""
+        light_sum = 0
 
     if request.method == "POST":
         is_try = request.form["isTry"]
         lights = []
         if is_try=="true":               # true/falseは文字列として送られてくる
+            lights = contec.input()
+            print(lights)
+            """
             for _ in light_pins:
                 lights.append(random.choice([1, 0]))
+            """
         else:
             for pin in light_pins:
                 lights.append(GPIO.input(pin))
@@ -187,20 +201,37 @@ def enpowerLED():
         is_On = int(request.form["isOn"])
         if is_On:
             print("育成LEDオン")
+            contec.output(True)
+        else:
+            print("育成LEDオフ")
+            contec.output(False)
+
+        """
+        is_On = int(request.form["isOn"])
+        if is_On:
+            print("育成LEDオン")
             GPIO.output(led_pin, True)
         else:
             print("育成LEDオフ")
             GPIO.output(led_pin, False)
+        """
         return json.dumps({"response": "done"})
 
 
 # 設定ファイル
 @app.route("/getConfig", methods=["POST"])
 def getConfig():
+    global sensing_count
     if request.method == "POST":
         dict = config.read()
-        print("設定読み込み", dict)
+        sensing_count = int(dict["sensing_count"])      # 数値に直す
+        arr = []
+        for i in [1, 2, 3, 4]:
+            arr.append(int(dict["output" + i]))
+        print(arr)
+        contec.define_output_relays(arr)
         return json.dumps(dict)
+
 
 @app.route("/setConfig", methods=["POST"])
 def setConfig():
@@ -213,11 +244,24 @@ def setConfig():
                 "evening_offset": request.form["evening_offset"],
                 "morning_minutes": request.form["morning_minutes"],
                 "evening_minutes": request.form["evening_minutes"],
+                "sensing_interval": request.form["sensing_interval"],
+                "sensing_count": request.form["sensing_count"],
+                "output1": request.form["output1"],
+                "output2": request.form["output2"],
+                "output3": request.form["output3"],
+                "output4": request.form["output4"],
                 }
+        
+        # 文字列のtrue/falseを1と0に変換する　ただしiniに書き込むため"1"と"0"にする
+        for i in [1,2,3,4]:
+            key = f"output{i}"
+            dict[key] = "1" if request.form[key]=="true" else "0"
+        
         print("設定変更", dict)
         config.write(dict)
         return json.dumps({"response": "done"})
-
+        print("=" * 50)
+    print("*" * 50)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)

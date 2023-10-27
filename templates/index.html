@@ -11,23 +11,53 @@
 <link rel="stylesheet" type="text/css" href="{{url_for('static', filename='style/jquery.keypad.css')}}">
 <title>AgriBecky</title>
 </head>
-<body>
+<body oncontextmenu="return false;">
 <!-- 設定画面 !-->
 <div class="config_bg"></div>
 <div class="config_window">
     <form>
-        <div class="caution">設定ウィンドウの外側をクリックするとこの画面は閉じます</div>
+        <div class="config_comment center">設定ウィンドウの外側をクリックするとこの画面は閉じます</div>
         <b>設定</b><br>
         <label for="place">　地域：<input type="text" name="place" id="place" class="w1 left"></label><br>
-        <label for="lat">　緯度：<input type="text" name="lat" id="lat" class="w1 right"></label><br>
-        <label for="lon">　軽度：<input type="text" name="lon" id="lon" class="w1 right"></label><br>
+        <label for="lat">　緯度：<input type="text" name="lat" id="lat" class="w1 right"></label>　
+        <label for="lon">　軽度：<input type="text" name="lon" id="lon" class="w1 right"></label>　
         <label for="elev">　標高：<input type="text" name="elev" id="elev" class="w1 right"></label><br>
         <br>
         <b>強制点灯時間</b><br>
         <label>　日の出の　<input type="text" id="morning_offset" class="w05 right" value="{{config['morning_offset']}}"></label> <label>分後からの<input type="text" id="morning_minutes" class="w05 right" value="{{config['morning_minutes']}}"></label>分間<br>
         <label>　日の入りの<input type="text" id="evening_offset" class="w05 right" value="{{config['evening_offset']}}"></label> <label>分前までの<input type="text" id="evening_minutes" class="w05 right" value="{{config['evening_minutes']}}"></label>分間<br>
         <br>
-        <div class="confirm"><button type="submit" id="setConfig">決定</button></div>
+        <b>天気感知間隔</b><br>
+        <div class="caution">
+        例　「10分間隔 6回」にすると、10分おきに光センサーの状態を取得し、<br>
+        　　過去6回（60分）の天気を総合的に判断して<br>
+        　　次の60分間について育成LEDを点灯させるか消灯させるか判断します<br>
+        <br></div>
+        <label>　天気感知　<input type="text" id="sensing_interval" class="w05 right" value="{{config['sensing_interval']}}"></label>分間隔で <label><input type="text" id="sensing_count" class="w05 right" value="{{config['sensing_count']}}"></label>回<br>
+        <br>
+        <b>出力選択</b><br>
+        <div class="config_comment">
+        　本システムは4出力に対応しています　ほ場の規模に応じて出力を切ってください<br>
+        <br></div>　
+        <div class="btnOutput" id="output1">出力1</div>
+        <div class="btnOutput" id="output2">出力2</div>
+        <div class="btnOutput" id="output3">出力3</div>
+        <div class="btnOutput" id="output4">出力4</div>
+        <br>
+        <div class="right"><div id="setConfig" class="config_confirm">決定</div></div>
+    </form>
+</div>
+<!-- 工場設定画面 !-->
+<div class="admin_window">
+        <div class="config_comment center">設定ウィンドウの外側をクリックするとこの画面は閉じます</div>
+        <b>工場設定</b><br>
+        <table>
+            <tr><td>温湿度計</td><td>光センサー</td><td>バッテリ電圧</td><td>育成LED</td></tr>
+            <tr><td><span class="btnTry" id="HumiTry">トライ</span></td>
+                <td><span class="btnTry" id="LightTry">トライ</span></td>
+                <td><span class="btnTry" id="BattTry">トライ</span></td>
+                <td><span class="btnTry" id="LEDTry">トライ</span></td></tr>
+        </table>
     </form>
 </div>
 <!-- メイン画面 !-->
@@ -35,15 +65,9 @@
 <tr>
 <td class="left"><span class="title">AgriBecky</span></td>
 <td class="right">
-    <span id="btnConfig"><img src="{{url_for('static', filename='images/config.png')}}"></span>
-    <table>
-        <tr><td>温湿度計</td><td>光センサー</td><td>バッテリ電圧</td><td>育成LED</td></tr>
-        <tr><td><span class="btnTry" id="HumiTry">トライ</span></td>
-            <td><span class="btnTry" id="LightTry">トライ</span></td>
-            <td><span class="btnTry" id="BattTry">トライ</span></td>
-            <td><span class="btnTry" id="LEDTry">トライ</span></td></tr>
-    </table>
-    <span id="time"></span></td>
+    <span id="btnConfig"><img src="{{url_for('static', filename='images/icon_config.png')}}"></span>
+    <span id="btnAdmin"><img src="{{url_for('static', filename='images/icon_admin.png')}}"></span><br>
+    <span id="time">　</span></td>
 </tr>
 </table>
 
@@ -56,6 +80,7 @@
     <label class="tab_item" for="btn_log">ログ</label>
     <!-- メイン画面 !-->
     <div class="tab_content" id="main_content">
+        <div class="main_msg_ng" id="main_msg"></div>
         <div class="parent">
             <div class="ephem">
                 <div class="ephem_content">
@@ -128,14 +153,21 @@
                 <b>制御盤</b>　状態：<b id="stateAuto">自動</b><br>
                 <br>
                 <table>
-                    <tr><td class="left">自動</td><td class="right">手動</td></tr>
-                    <tr><td colspan="2"><div id="swAuto"><img src="{{url_for('static', filename='images/sw_l.png')}}" id="imgAuto" class="imgAuto"></div></td></tr>
+                    <tr><td class="left">自動</td><td class="right">手動</td>
+                        <td class="w1 center">Ready</td>
+                        <td class="w1 center">起動</td>
+                        <td class="w1 center">停止</td></tr>
+                    <tr><td colspan="2"><div id="swAuto"><img src="{{url_for('static', filename='images/sw_l.png')}}" id="imgAuto" class="imgAuto"></div></td>
+                        <td class="center"><img src="{{url_for('static', filename='images/btnGreenOff.png')}}" id="lampReady"></td>
+                        <td class="center"><img src="{{url_for('static', filename='images/btnOrangeOff.png')}}" id="btnRun"></td>
+                        <td class="center"><img src="{{url_for('static', filename='images/btnBlack.png')}}" id="btnStop"></td>
+                        </tr>
                 </table>
                 <br>
                 <table>
                     <tr><td>ランプ点灯</td><td>育成LED強制ON</td></tr>
-                    <tr><td class="center"><div id="btnAllLight"><img src="{{url_for('static', filename='images/btn_normal.png')}}" id="imgLight"></div></td>
-                        <td class="center"><div id="btnLedOn"><img src="{{url_for('static', filename='images/btn_normal.png')}}" id="imgLedOn"></div></td></tr>
+                    <tr><td class="center"><div id="btnAllLight"><img src="{{url_for('static', filename='images/btnRedOff.png')}}" id="imgLight"></div></td>
+                        <td class="center"><div id="btnLedOn"><img src="{{url_for('static', filename='images/btnRedOff.png')}}" id="imgLedOn"></div></td></tr>
                 </table>
                 </td>
                 </tr>

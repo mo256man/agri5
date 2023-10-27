@@ -1,13 +1,28 @@
 // グローバル変数
-let isAuto =true;           // 自動か各個か
-let isHumiTry = false;      // 温湿度計がトライか本番か
-let isBattTry = false;      // バッテリ電圧計がトライか本番か
-let isLightTry = false;     // 光センサーがトライか本番か
-let isLEDTry = true;        // 育成LEDがトライか本番か
-let isLED = false;          // 育成LEDを光らせるか
-let isForce = false;        // LEDを強制的にオンオフさせるか光センサーで制御するか
-let mode = true             // モード（自動／強制オン／強制オフ／手動操作中）
-let lastmode = false        // 1秒前のモード　モードが変わったらログを残す
+let isReady = true;                 // 運転準備　プログラム内に運転準備を落とす処理はない
+let isRun = false;                  // 起動中
+let isAuto = true;                  // 自動か各個か
+let isHumiTry = true;              // 温湿度計がトライか本番か
+let isBattTry = true;              // バッテリ電圧計がトライか本番か
+let isLightTry = true;             // 光センサーがトライか本番か
+let isLEDTry = true;                // 育成LEDがトライか本番か
+let isLED = false;                  // 育成LEDを光らせるか
+let lastIsLED = isLED;              // 一つ前の育成LED点灯状況
+let isForce = false;                // LEDを強制的にオンオフさせるか光センサーで制御するか
+let mode = true                     // モード（自動／強制オン／強制オフ／手動操作中）
+let lastmode = false                // 1秒前のモード　モードが変わったらログを残す
+
+let sensing_interval = 0;           // 何分おきに光センサーの状態を取得するか
+let sensing_count = 0;              // 何回光センサーの状態を取得したら育成LED点灯の制御をおこなうか
+let senging_time = "00:00";         // 次に光センサーの状態を取得する時刻
+const sensing_threshold = 0.5;      // ★ LEDを付けるか消すかのしきい値（5個×回数 に対する割合）
+let lightMinutesSum = 0;            // 1日の育成LED点灯時間累計（単位：分）
+let lightOnTime;                    // 育成LED点灯時刻　引き算をするのでdayjs形式
+let outputRelays = [0,0,0,0,0]      // 全4個のアウトプットについて出力するかしないか　0から始まるが0番目は未使用
+
+const OPELOG = "動作ログ.txt"
+const DAYLOG = "日当たりログ.txt"
+
 let tab = "main";
 let lights = "○−○−○";
 const pins = ["26", "19", "13", "6", "5"];
@@ -24,7 +39,7 @@ let now, today, time
 let logMsg="";
 let logTxt="";
 let bp;
-    
+
 $(async function() {
     // 読み込み完了後に一度だけ実行する関数
     await do1st();
@@ -32,7 +47,25 @@ $(async function() {
    
     setInterval(showTime, 1000);
 
-    // 自動・各個　切り替え
+    // 起動ボタンを押す
+    $("#btnRun").on('click', function(){
+        if (isAuto) {                           // 自動モードのみ起動可能　括弧（手動）では動かない
+            isRun = true;
+            showRunLamp(isRun);
+            addMsg(time + "　起動しました");
+        };
+    });
+
+    // 停止ボタンを押す
+    $("#btnStop").on('click', function(){
+        if (isRun) {                            // 起動中のみ停止可能
+            isRun = false;
+            showRunLamp(isRun);
+            addMsg(time + "　停止しました");
+        };
+    });
+
+    // 自動手動　切り替え
     $("#swAuto").on('click', function(){
         isAuto = !isAuto;
         showState();
@@ -41,44 +74,54 @@ $(async function() {
             enpowerLED(isLED);
             showLedLamp(isLED);
             $("#mode").text(mode);
+            addMsg(time + "　自動に切り替えました");
+            showRunLamp(isRun);
+           
         } else {
-            showLights([0,0,0,0,0]);
-            enpowerLED(false);
-            showLedLamp(false);
+            isRun = false;              // 手動にしたら運転が落ちる
+            isLED = false;
+            showRunLamp(isRun);
+            enpowerLED(isLED);
+            showLedLamp(isLED);
+            addMsg(time + "　手動に切り替えました");
             $("#mode").text("手動操作中");
+            $("#main_msg").removeClass("main_msg_ok");
+            $("#main_msg").addClass("main_msg_ng");
+            $("#main_msg").text("手動操作モードです　制御盤で自動に切り替え、起動ボタンを押してください");
+
         }
     })
 
-    // ランプ全点灯ボタンを押す
+    // ランプ全点灯ボタンを押す（手動操作時のみ）
     $("#btnAllLight").mousedown(function(){
         if (! isAuto) {
-            $("#imgLight").attr("src", "static/images/btn_push.png");
-            showLights([1,1,1,1,1]);
+            $("#imgLight").attr("src", "static/images/btnRedOn.png");
+            showLights("○○○○○");
             showLedLamp(true);
         }
     })
 
-    // ランプ全点灯ボタンを離す
+    // ランプ全点灯ボタンを離す（手動操作時のみ）
     $("#btnAllLight").mouseup(function(){
         if (! isAuto) {
-            $("#imgLight").attr("src", "static/images/btn_normal.png");
-            showLights([0,0,0,0,0]);
+            $("#imgLight").attr("src", "static/images/btnRedOff.png");
+            showLights("−−−−−");
             showLedLamp(false);
         }
     })
 
-    // 育成LED強制点灯ボタンを押す
+    // 育成LED強制点灯ボタンを押す（手動操作時のみ）
     $("#btnLedOn").mousedown(function(){
         if (! isAuto) {
-            $("#imgLedOn").attr("src", "static/images/btn_push.png");
+            $("#imgLedOn").attr("src", "static/images/btnRedOn.png");
             enpowerLED(true);
         }
     })
 
-    // 育成LED強制点灯ボタンを離す
+    // 育成LED強制点灯ボタンを離す（手動操作時のみ）
     $("#btnLedOn").mouseup(function(){
         if (! isAuto) {
-            $("#imgLedOn").attr("src", "static/images/btn_normal.png");
+            $("#imgLedOn").attr("src", "static/images/btnRedOff.png");
             enpowerLED(false);
             showLedLamp(false);
         }
@@ -95,14 +138,25 @@ $(async function() {
     // 設定変更ボタンを押す
     $("#setConfig").on("click", function(){
         setConfig();
+        $(".config_bg").css("visibility", "hidden");
+        $(".config_window").css("visibility", "hidden");
+        $(".admin_window").css("visibility", "hidden");
     });
 
     // 設定画面を閉じる
     $(".config_bg").on("click", function(){
         $(".config_bg").css("visibility", "hidden");
         $(".config_window").css("visibility", "hidden");
+        $(".admin_window").css("visibility", "hidden");
     });
 
+
+    // 工場設定画面を出す
+    $("#btnAdmin").on("click", function(){
+        getConfig();
+        $(".config_bg").css("visibility", "visible");
+        $(".admin_window").css("visibility", "visible");
+    });
 
     // トライボタン切り替え
     $(".btnTry").on('click', function(){
@@ -128,6 +182,16 @@ $(async function() {
         }
         showTryBtn("#"+btnid, bool);
     })
+    
+    // 出力選択ボタンを押す
+    $(".btnOutput").on('click', function(){
+        const id = $(this).attr("id");              // ボタンID
+        const num = id.slice(-1);                   // IDの末尾1文字
+        let bool = outputRelays[num];               // そのボタンの状態
+        bool = ! bool;                              // 設定反転する
+        outputRelays[num] = bool;                   // 反転した結果を変数に代入する
+        showOutputLamp("#" + id, bool);             // 反転した結果でランプを点灯消灯させる
+    });
 
 });
 
@@ -142,11 +206,13 @@ async function do1st() {
     $.each(ids, function(i, id){
         $(id).keypad(kbOpt);
     });
-    
     getNow();
     clearMsg();
     addMsg(time+"　開始")
-    await getEphem();
+    showReadyLamp(isReady);     // Ready（運転準備）ランプ
+    showRunLamp(isRun);         // 起動ランプ
+    await getConfig();          // 設定を取得する
+    await getEphem();           // 暦を取得する
     await getBattSetting();
     await getBatt(true);
     await getHumi(true);
@@ -170,7 +236,10 @@ function getNow() {
     time = now.format("HH:mm:ss");
 };
 
+
+//////////////////////////////////////////////////////////////////////
 // 時計　兼　アラーム
+//////////////////////////////////////////////////////////////////////
 async function showTime() {
     getNow();
     $("#time").html(today + " " + time);
@@ -180,8 +249,8 @@ async function showTime() {
     const s = now.second();
 
     if (isAuto) {
-        // 60分ごとに温湿度を更新する
-        if (m==10 && s==20) {
+        // 60分ごとに温湿度を更新する　ただし運転中のみ
+        if (m==10 && s==20 && isRun) {
             getHumi(isHumiTry);
         }
 
@@ -191,24 +260,30 @@ async function showTime() {
             bp = getBatt(isBattTry);
         }
 
-        // 1分ごとに光センサーを更新する　ただし自動制御中のみ
-        if (true) {
-        //if (! isForce) {
-            if (s==30) {
+        // 1分ごとに光センサーを更新する　ただし運転中のみ
+        if (time == senging_time) {
+            if (isRun && ! isForce) {
                 getLight(isLightTry);
+                addLightLog("次の光センサー更新 " + senging_time);
+            } else {
+                addMsg("運転中ではないので光センサー更新しない");
             }
+            senging_time = dayjs().add(sensing_interval, "minutes").format("HH:mm:30");     // 次に光センサーを取得する時刻
         }
         
-        //0時0分になったらあらためて暦を取得する
+        //0時0分になったらあらためて1日分の記録を残し、暦を取得する
         if (time=="00:00:00") {
             addMsg(time+"　日付が変わった")
+            addMsg("　日照時間:" + lightMinutesSum + "分")
             getEphem();
+            await writeLog("日付変更", OPELOG)
+            await writeLog(dayjs().add(-1, "d").format("YYYY/MM/DD") + "　日照時間:" + lightMinutesSum + "分", DAYLOG);
+            lightMinutesSum = 0;
         }
 
         // 日の出などの時間による制御
         getTimeMode();
     }
-
 }
 
 
@@ -249,8 +324,20 @@ function addLightLog(txt) {
 
 // 光センサーログを削除する
 function clearLightMsg() {
-    $("#lightlog").html("光センサー　6回測定し、次の点灯消灯を判断します<br>");
+    $("#lightlog").html("光センサー<br>　" + sensing_interval + "分間隔で" + sensing_count + "回測定し、次の点灯消灯を判断します<br><br>");
 }
+
+// ログをテキストファイルに保存する
+async function writeLog(text, filename) {
+    await $.ajax("/writeLog", {
+        type: "POST",
+        data: {"text": text, "filename": filename}
+    }).done(function(data) {
+//        console.log("ログへの書き込み成功");
+    }).fail(function() {
+        console.log("ログへの書き込み失敗");
+    });
+};
 
 
 //////////////////////////////////////////////////////////////////////
@@ -279,37 +366,60 @@ async function getHumi(isTry) {
 
 
 //////////////////////////////////////////////////////////////////////
-//    日光
+//    光センサー
 //////////////////////////////////////////////////////////////////////
 async function getLight(isTry) {
+    let msg = "";
     await $.ajax("/getLight", {
         type: "post",
-        data: {"isTry": isTry},                 // テストか本番かのbool値をisTryとして送る
+        data: {"isTry": isTry},                             // テストか本番かのbool値をisTryとして送る
     }).done(function(data) {
         const dict = JSON.parse(data);
-        console.log(dict);
-        try {                                   // センサー値取得できていたら
-            if (dict["light_cnt"]==0) {         // 0回目で
-                clearLightMsg();                // メッセージをクリアする
+        try {                                               // センサー値取得できていたら
+            if (dict["light_cnt"]==0) {                     // 0回目で
+                clearLightMsg();                            // メッセージをクリアする
             }
-            addLightLog(time + "　#" + (dict["light_cnt"]+1) + "　" + dict["log"]);
+            msg = time + "　#" + (dict["light_cnt"]+1) + "　" + dict["log"]
+            addLightLog(msg);
             showLights(dict["log"]);
-            if (dict["light_cnt"]==5) {         // 6回センサー値を測定したら
-                if (dict["light_sum"] > 8) {    // 点灯消灯判断する
-                    addLightLog("　十分明るいので点灯しない")
-                    isLED = false;
-                } else {
-                    addLightLog("　明るさが足りないので点灯する")
-                    isLED = false;
-                }
+            const th = 5*sensing_count*sensing_threshold;
+            if (dict["light_cnt"] == sensing_count-1) {             // 指定した回数だけセンサー値を測定したら
+                addLightLog("光のカウント" + dict["light_sum"] + "　　しきい値" + th);
+                if (dict["light_sum"] > th) {                       // 点灯消灯判断　しきい値以上ならば
+                    isLED = false;                                  // 消灯にする
+                    if (lastIsLED) {                                // さっきまで点灯していたら
+                        msg = "十分明るいので消灯します";
+                        const lightMinutes = dayjs().diff(lightOnTime, "minutes");      // lightOnTimeから今までの時間（単位：分）
+                        console.log("点灯時間 " + lightMinutes + "分");
+                        lightMinutesSum += lightMinutes;
+                        writeLog(time + "まで" + lightMinutes + "分間点灯　累計 " + lightMinutesSum + "分", DAYLOG)
+                    } else {
+                        msg = "消灯を継続します";
+                    };
+                } else {                                            // さもなくば
+                    isLED = true;                                   // 点灯にする
+                    if (lastIsLED) {                                // さっきまで点灯していたら
+                        msg = "点灯を継続します";
+                    } else {
+                        msg = "暗いので点灯します";
+                        lightOnTime = dayjs();
+                    };
+                    
+                };
+                addMsg(time + "　" + msg);
+                addLightLog(msg);
+                lastIsLED = isLED
                 enpowerLED(isLED);
             }
         } catch(e) {                            // センサー値取得できなかったら
             console.log("光センサー　センサー失敗");
         }
     }).fail(function() {                        // ajaxのリターン失敗したら更新しない
-        console.log("光センサー　通信失敗");
+        msg = "光センサー　通信失敗"
     });
+
+    await writeLog(msg, OPELOG);
+
 };
 
 // 光センサーの状態を表示する関数
@@ -390,8 +500,6 @@ function showLedLamp(flag) {
 //////////////////////////////////////////////////////////////////////
 async function getEphem() {
     $("#date").text(dayjs().format("M月D日"))
-    await getConfig();                                      // あらためて設定を読み込む
-    console.log("暦取得するぞ");
     await $.ajax("/getEphem", {
         type: "POST",
     }).done(function(data) {
@@ -428,7 +536,7 @@ async function getEphem() {
     });
 };
 
-function getTimeMode() {
+async function getTimeMode() {
     getNow();
     let msg = ""
     const now = time.slice(0, 5)            // HH:mm:ss を HH:mm にする
@@ -452,6 +560,7 @@ function getTimeMode() {
 
     // 時刻モードが変更になったときのみ以下の処理をおこなう
     if (mode != lastmode) {
+        lastmode = mode;
         switch (mode) {
             case "夜":
                 //mode = "強制OFF";
@@ -480,12 +589,12 @@ function getTimeMode() {
                 enpowerLED(isLED);
                 break;
         };
-        addMsg(time + msg + "モード変更　" + mode);
+        msg = time + msg + "モード変更　" + mode;
+        addMsg(msg);
+        await writeLog(msg, OPELOG);
     }
     $("#mode").text(mode);
-    lastmode = mode;
 }
-
 
 
 //////////////////////////////////////////////////////////////////////
@@ -572,8 +681,19 @@ async function getConfig() {
         $("#evening_offset").val(dict["evening_offset"]);
         $("#morning_minutes").val(dict["morning_minutes"]);
         $("#evening_minutes").val(dict["evening_minutes"]);
-        console.log("設定ファイル取得成功");
-        console.log(dict);
+        sensing_interval = Number(dict["sensing_interval"]);
+        $("#sensing_interval").val(sensing_interval);
+        sensing_count = Number(dict["sensing_count"]);
+        $("#sensing_count").val(sensing_count);
+
+        // アウトプットリレー
+        for (i=1; i<=4; i++) {
+            outputRelays[i] = convertStrToBool(dict["output" + i]);     // 文字列の0/1を真偽値にする
+            showOutputLamp("#output" + i, outputRelays[i]);
+        }
+        
+        senging_time = dayjs().add(1, "minutes").format("HH:mm:30");     // 次に光センサーを取得する時刻
+        console.log("設定ファイル取得成功" + senging_time);
     }).fail(function() {
         console.log("設定ファイル取得失敗");
     });
@@ -589,10 +709,15 @@ async function setConfig() {
     const evening_offset = $("#evening_offset").val();
     const morning_minutes = $("#morning_minutes").val();
     const evening_minutes = $("#evening_minutes").val();
-    const dict = {"place": place, "lat": lat, "lon": lon, "elev": elev,
-                  "morning_offset": morning_offset, "evening_offset": evening_offset,
-                  "morning_minutes": morning_minutes, "evening_minutes": evening_minutes};
-    console.log("設定変更" + dict)
+    sensing_interval = Number($("#sensing_interval").val());
+    sensing_count = Number($("#sensing_count").val());
+    let dict = {"place": place, "lat": lat, "lon": lon, "elev": elev,
+                "morning_offset": morning_offset, "evening_offset": evening_offset,
+                "morning_minutes": morning_minutes, "evening_minutes": evening_minutes,
+                "sensing_interval": sensing_interval, "sensing_count": sensing_count};
+    for (i=1; i<=4; i++) {
+        dict["output" + i] = outputRelays[i];
+    }
     await $.ajax("/setConfig", {
         type: "POST",
         data: dict,
@@ -603,3 +728,55 @@ async function setConfig() {
         console.log("設定ファイル変更失敗");
     });
 };
+
+
+// 起動ランプ
+function showRunLamp(bool) {
+    if (bool) {
+        $("#btnRun").attr("src", "static/images/btnOrangeOn.png");
+        $("#main_msg").removeClass("main_msg_ng");
+        $("#main_msg").addClass("main_msg_ok");
+        $("#main_msg").text("起動中です");
+    } else {
+        $("#btnRun").attr("src", "static/images/btnOrangeOff.png");
+        $("#main_msg").removeClass("main_msg_ok");
+        $("#main_msg").addClass("main_msg_ng");
+        $("#main_msg").text("停止中です　制御盤で起動ボタンを押してください");
+    }
+}
+
+// 運転準備（Ready）ランプ
+function showReadyLamp(bool) {
+    if (bool) {
+        console.log("ランプ点灯");            
+        $("#lampReady").attr("src", "static/images/btnGreenOn.png");
+    } else {
+        console.log("ランプ消灯");            
+        $("#lampReady").attr("src", "static/images/btnGreenOff.png");
+    }
+}
+
+// アウトプットリレーランプ
+function showOutputLamp(id, bool) {
+    if (bool) {
+        $(id).addClass("outputOn");
+        $(id).removeClass("outputOff");
+        } else {
+        $(id).removeClass("outputOn");
+        $(id).addClass("outputOff");
+        };
+    };
+
+
+// 文字列のtrue/falseを真偽値に変換する関数
+function convertStrToBool(str){
+  if(typeof str != "string"){ 
+    return Boolean(str); 
+  }
+  try{
+    let obj = JSON.parse(str.toLowerCase());
+    return obj == true;
+  }catch(e){
+    return str != "";
+  }
+}
